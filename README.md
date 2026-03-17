@@ -4,7 +4,7 @@
 > A production-grade, HPC-ready platform for multi-scale brain simulation  
 > Inspired by the Blue Brain Project — engineered for the next generation of computational neuroscience
 
----
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ## Platform Overview
 
@@ -17,7 +17,7 @@ NeuroSim is a complete, modular platform for:
 - **ML-assisted** parameter optimization and pattern discovery
 - **Interactive** 3D visualization and analysis
 
----
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ## Architecture Summary
 
@@ -35,7 +35,7 @@ NeuroSim is a complete, modular platform for:
 └─────────────┴──────────────┴──────────────┴────────────────────────┘
 ```
 
----
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ## Repository Structure
 
@@ -85,7 +85,7 @@ neurosim/
 └── scripts/                    # Utility scripts
 ```
 
----
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ## Quick Start
 
@@ -109,7 +109,7 @@ mpirun -np 64 python -m neurosim.cli simulate --config configs/l5_microcircuit.y
 python -m neurosim.visualization.dashboard
 ```
 
----
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ## Scientific Standards
 
@@ -121,7 +121,7 @@ python -m neurosim.visualization.dashboard
 - NeuroML2 model interchange
 - HDF5/NWB data standards
 
----
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ## License
 
