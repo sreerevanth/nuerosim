@@ -5,7 +5,6 @@
 > Inspired by the Blue Brain Project — engineered for the next generation of computational neuroscience
 
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
 ## Platform Overview
 
 NeuroSim is a complete, modular platform for:
