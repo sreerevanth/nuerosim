@@ -36,7 +36,7 @@ NeuroSim is a complete, modular platform for:
 
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-## Repository Structure
+## structure of the repository 
 
 ```
 neurosim/
