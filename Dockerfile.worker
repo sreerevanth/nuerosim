@@ -1,0 +1,51 @@
+# ─────────────────────────────────────────────────────────────
+#  Dockerfile.worker  —  NeuroSim CPU Simulation Worker
+# ─────────────────────────────────────────────────────────────
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+COPY pyproject.toml README.md ./
+COPY python/ python/
+
+RUN pip install --upgrade pip && \
+    pip install build && \
+    python -m build --wheel --no-isolation
+
+# ── Runtime stage ─────────────────────────────────────────────
+FROM python:3.11-slim
+
+LABEL org.opencontainers.image.title="NeuroSim CPU Worker"
+
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends \
+        libhdf5-103 \
+        libopenmpi3 \
+        openmpi-bin && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /build/dist/*.whl /tmp/
+RUN pip install --no-cache-dir /tmp/*.whl && \
+    pip install --no-cache-dir \
+        celery[redis]>=5.3 \
+        mpi4py>=3.1 \
+        numba>=0.57
+
+COPY python/ ./python/
+COPY configs/ ./configs/
+COPY scripts/ ./scripts/
+
+RUN useradd -m -u 1000 neurosim && \
+    mkdir -p /app/outputs /app/checkpoints && \
+    chown -R neurosim:neurosim /app
+USER neurosim
+
+ENV PYTHONPATH=/app/python
+ENV NEUROSIM_WORKER_TYPE=cpu
+
+CMD ["celery", "-A", "neurosim.worker.celery_app", "worker", \
+     "--loglevel=info", \
+     "--concurrency=1", \
+     "--queues=neurosim-jobs", \
+     "--hostname=worker-cpu@%h"]

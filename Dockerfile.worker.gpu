@@ -1,0 +1,78 @@
+# ─────────────────────────────────────────────────────────────
+#  Dockerfile.worker.gpu  —  NeuroSim GPU Simulation Worker
+#  Base: NVIDIA CUDA 12.2 + cuDNN 8 on Ubuntu 22.04
+# ─────────────────────────────────────────────────────────────
+FROM nvidia/cuda:12.2.2-cudnn8-devel-ubuntu22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends \
+        python3.11 python3.11-dev python3-pip \
+        libhdf5-dev libopenmpi-dev openmpi-bin \
+        cmake build-essential git && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Build C++/CUDA core
+COPY CMakeLists.txt ./
+COPY cpp/ cpp/
+RUN cmake -B cmake-build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DENABLE_CUDA=ON \
+        -DENABLE_MPI=ON \
+        -DENABLE_OPENMP=ON \
+        -DBUILD_PYTHON=OFF \
+        -DBUILD_TESTS=OFF && \
+    cmake --build cmake-build -j$(nproc)
+
+# Build Python wheel
+COPY pyproject.toml README.md ./
+COPY python/ python/
+RUN python3.11 -m pip install --upgrade pip build && \
+    python3.11 -m build --wheel --no-isolation
+
+# ── Runtime stage ─────────────────────────────────────────────
+FROM nvidia/cuda:12.2.2-cudnn8-runtime-ubuntu22.04
+
+LABEL org.opencontainers.image.title="NeuroSim GPU Worker"
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends \
+        python3.11 python3-pip \
+        libhdf5-103 libopenmpi3 openmpi-bin && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy compiled CUDA library
+COPY --from=builder /build/cmake-build/libneurosim_core.so /usr/local/lib/
+RUN ldconfig
+
+# Install Python packages including CuPy for GPU arrays
+COPY --from=builder /build/dist/*.whl /tmp/
+RUN python3.11 -m pip install --no-cache-dir /tmp/*.whl && \
+    python3.11 -m pip install --no-cache-dir \
+        celery[redis]>=5.3 \
+        mpi4py>=3.1 \
+        cupy-cuda12x>=12.0 \
+        numba>=0.57
+
+COPY python/ ./python/
+COPY configs/ ./configs/
+
+RUN useradd -m -u 1000 neurosim && \
+    mkdir -p /app/outputs /app/checkpoints && \
+    chown -R neurosim:neurosim /app
+USER neurosim
+
+ENV PYTHONPATH=/app/python
+ENV NEUROSIM_WORKER_TYPE=gpu
+ENV CUDA_VISIBLE_DEVICES=all
+
+CMD ["celery", "-A", "neurosim.worker.celery_app", "worker", \
+     "--loglevel=info", \
+     "--concurrency=1", \
+     "--queues=neurosim-gpu-jobs", \
+     "--hostname=worker-gpu@%h"]

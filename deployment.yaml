@@ -1,0 +1,284 @@
+# ─────────────────────────────────────────────────────────────
+#  NeuroSim Kubernetes Deployment
+#  HPC-ready: GPU nodes, MPI jobs, autoscaling
+# ─────────────────────────────────────────────────────────────
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: neurosim
+  labels:
+    app: neurosim
+
+---
+# ── Config Map ────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: neurosim-config
+  namespace: neurosim
+data:
+  LOG_LEVEL: "info"
+  NEUROSIM_ENV: "production"
+  MAX_NEURONS_PER_JOB: "1000000"
+  CHECKPOINT_INTERVAL_MS: "100"
+
+---
+# ── API Gateway Deployment ────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: neurosim-gateway
+  namespace: neurosim
+  labels:
+    app: neurosim-gateway
+    tier: api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: neurosim-gateway
+  template:
+    metadata:
+      labels:
+        app: neurosim-gateway
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: gateway
+          image: neurosim/gateway:latest
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: neurosim-config
+          env:
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: neurosim-secrets
+                  key: redis-url
+            - name: POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: neurosim-secrets
+                  key: postgres-url
+          resources:
+            requests:
+              cpu: "2"
+              memory: "4Gi"
+            limits:
+              cpu: "4"
+              memory: "8Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+
+---
+# ── Gateway Service ───────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: neurosim-gateway-svc
+  namespace: neurosim
+spec:
+  selector:
+    app: neurosim-gateway
+  ports:
+    - port: 80
+      targetPort: 8000
+      protocol: TCP
+  type: ClusterIP
+
+---
+# ── Ingress ───────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: neurosim-ingress
+  namespace: neurosim
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/websocket-services: "neurosim-gateway-svc"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: neurosim.yourdomain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: neurosim-gateway-svc
+                port:
+                  number: 80
+
+---
+# ── CPU Worker Deployment ─────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: neurosim-worker-cpu
+  namespace: neurosim
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: neurosim-worker-cpu
+  template:
+    metadata:
+      labels:
+        app: neurosim-worker-cpu
+    spec:
+      nodeSelector:
+        neurosim.io/node-type: cpu-worker
+      containers:
+        - name: worker
+          image: neurosim/worker:latest
+          env:
+            - name: NEUROSIM_WORKER_TYPE
+              value: "cpu"
+            - name: NEUROSIM_N_THREADS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
+          resources:
+            requests:
+              cpu: "16"
+              memory: "64Gi"
+            limits:
+              cpu: "32"
+              memory: "128Gi"
+
+---
+# ── GPU Worker Deployment ─────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: neurosim-worker-gpu
+  namespace: neurosim
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: neurosim-worker-gpu
+  template:
+    metadata:
+      labels:
+        app: neurosim-worker-gpu
+    spec:
+      nodeSelector:
+        accelerator: nvidia-a100
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: worker-gpu
+          image: neurosim/worker-gpu:latest
+          env:
+            - name: NEUROSIM_WORKER_TYPE
+              value: "gpu"
+          resources:
+            requests:
+              cpu: "8"
+              memory: "32Gi"
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "32"
+              memory: "128Gi"
+              nvidia.com/gpu: "4"
+
+---
+# ── MPI Job (for large-scale distributed simulation) ──────────
+# Uses MPIJob CRD from mpi-operator
+apiVersion: kubeflow.org/v2beta1
+kind: MPIJob
+metadata:
+  name: neurosim-large-circuit
+  namespace: neurosim
+spec:
+  slotsPerWorker: 4
+  runPolicy:
+    cleanPodPolicy: Running
+    backoffLimit: 3
+  mpiReplicaSpecs:
+    Launcher:
+      replicas: 1
+      template:
+        spec:
+          containers:
+            - name: launcher
+              image: neurosim/worker:latest
+              command:
+                - mpirun
+                - --allow-run-as-root
+                - -np
+                - "64"
+                - python
+                - -m
+                - neurosim.cli
+                - simulate
+                - --config
+                - /configs/whole_cortex.yaml
+                - --distributed
+              resources:
+                limits:
+                  cpu: "4"
+                  memory: "8Gi"
+    Worker:
+      replicas: 16
+      template:
+        spec:
+          nodeSelector:
+            neurosim.io/node-type: hpc-worker
+          containers:
+            - name: worker
+              image: neurosim/worker:latest
+              resources:
+                requests:
+                  cpu: "16"
+                  memory: "128Gi"
+                limits:
+                  cpu: "32"
+                  memory: "256Gi"
+
+---
+# ── Horizontal Pod Autoscaler ─────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: neurosim-worker-hpa
+  namespace: neurosim
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: neurosim-worker-cpu
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    - type: External
+      external:
+        metric:
+          name: redis_queue_length
+          selector:
+            matchLabels:
+              queue: neurosim-jobs
+        target:
+          type: AverageValue
+          averageValue: "5"

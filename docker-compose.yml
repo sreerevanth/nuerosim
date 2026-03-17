@@ -1,0 +1,174 @@
+# ─────────────────────────────────────────────────────────────
+#  NeuroSim Docker Compose Stack
+#  Services: API gateway, worker, visualization, database, monitoring
+# ─────────────────────────────────────────────────────────────
+
+version: "3.9"
+
+services:
+
+  # ── API Gateway ─────────────────────────────────────────────
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    image: neurosim/gateway:latest
+    ports:
+      - "8000:8000"
+    environment:
+      - NEUROSIM_ENV=production
+      - REDIS_URL=redis://redis:6379/0
+      - POSTGRES_URL=postgresql://neurosim:neurosim@postgres:5432/neurosimdb
+      - LOG_LEVEL=info
+    depends_on:
+      - redis
+      - postgres
+    volumes:
+      - ./configs:/app/configs:ro
+      - sim-outputs:/app/outputs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Simulation Worker (CPU) ──────────────────────────────────
+  worker-cpu:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    image: neurosim/worker:latest
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - NEUROSIM_WORKER_TYPE=cpu
+      - NEUROSIM_N_THREADS=16
+    depends_on:
+      - redis
+    volumes:
+      - sim-outputs:/app/outputs
+      - ./configs:/app/configs:ro
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "16"
+          memory: "64G"
+
+  # ── Simulation Worker (GPU) ──────────────────────────────────
+  worker-gpu:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker.gpu
+    image: neurosim/worker-gpu:latest
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - NEUROSIM_WORKER_TYPE=gpu
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    depends_on:
+      - redis
+    volumes:
+      - sim-outputs:/app/outputs
+    restart: unless-stopped
+
+  # ── Visualization Server ────────────────────────────────────
+  visualization:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.viz
+    image: neurosim/viz:latest
+    ports:
+      - "8050:8050"
+    environment:
+      - API_URL=http://gateway:8000
+    depends_on:
+      - gateway
+    volumes:
+      - sim-outputs:/app/outputs:ro
+    restart: unless-stopped
+
+  # ── Redis (job queue + cache) ────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 8gb --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+
+  # ── PostgreSQL (metadata + results) ─────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=neurosim
+      - POSTGRES_PASSWORD=neurosim
+      - POSTGRES_DB=neurosimdb
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U neurosim"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── MinIO (object storage for large simulation data) ─────────
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=neurosim
+      - MINIO_ROOT_PASSWORD=neurosim_secret
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    restart: unless-stopped
+
+  # ── Prometheus monitoring ────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+
+  # ── Grafana dashboards ───────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=neurosim
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./docker/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+
+volumes:
+  sim-outputs:
+  redis-data:
+  postgres-data:
+  minio-data:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  default:
+    name: neurosim-net

@@ -1,0 +1,185 @@
+# ─────────────────────────────────────────────────────────────
+#  NeuroSim Configuration: Single L5 Pyramidal Cell
+#  Experiment: Current-clamp, F-I curve generation
+# ─────────────────────────────────────────────────────────────
+
+experiment:
+  name: "l5_pyramidal_current_clamp"
+  description: "F-I curve for L5 pyramidal cell with standard HH channels"
+  author: "NeuroSim"
+  tags: ["single-cell", "current-clamp", "f-i-curve"]
+
+simulation:
+  dt: 0.025           # ms  (40 kHz)
+  t_stop: 2000.0      # ms
+  integrator: "rk4"
+  temperature: 37.0   # °C
+  record_dt: 0.1      # ms  recording resolution
+  seed: 42
+
+network:
+  type: "single_neuron"
+  neuron_type: "l5_pyramidal"
+
+current_clamps:
+  - neuron_id: 0
+    I_amp: 2.0        # nA
+    t_start: 200.0    # ms
+    t_stop: 1800.0    # ms
+
+recording:
+  soma_voltage: true
+  dendritic_voltage: true
+  calcium: true
+  spike_times: true
+  gate_states: false   # high memory cost
+
+analysis:
+  compute_fi_curve: true
+  fi_current_range: [0.5, 5.0]   # nA
+  fi_n_steps: 20
+  compute_isi: true
+  compute_cv: true
+
+output:
+  dir: "results/l5_fi_curve"
+  formats: ["hdf5", "csv", "npy"]
+
+---
+# ─────────────────────────────────────────────────────────────
+#  Configuration: Layer 5 Microcircuit
+#  E-I network: 100 pyramidal + 25 PV interneurons
+# ─────────────────────────────────────────────────────────────
+
+experiment:
+  name: "l5_microcircuit"
+  description: "L5 E-I microcircuit: spontaneous activity and gamma oscillations"
+
+simulation:
+  dt: 0.025
+  t_stop: 5000.0      # 5 seconds
+  integrator: "rk4"
+  temperature: 37.0
+  record_dt: 0.1
+  n_workers: 8
+  checkpoint_interval: 500.0
+  seed: 1234
+
+network:
+  type: "random_ei"
+  n_excitatory: 100
+  n_inhibitory: 25
+  connectivity:
+    p_ee: 0.10
+    p_ei: 0.50
+    p_ie: 0.50
+    p_ii: 0.10
+  weights:
+    ee_mean: 0.5    # nS
+    ei_mean: 0.8
+    ie_mean: 1.2
+    ii_mean: 0.6
+    noise_std: 0.1
+  delays:
+    ee_mean: 1.5    # ms
+    ei_mean: 1.0
+    ie_mean: 1.0
+    ii_mean: 0.8
+
+background_noise:
+  type: "poisson"
+  rate_exc: 5000.0    # Hz  (virtual excitatory background)
+  rate_inh: 2000.0    # Hz
+  w_exc: 0.3          # nS
+  w_inh: 0.6
+
+recording:
+  soma_voltage: true
+  spike_times: true
+  lfp: true
+  lfp_electrode:
+    x: 0.0
+    y: 0.0
+    z: 200.0          # μm above network center
+
+analysis:
+  compute_psth: true
+  psth_bin_size: 10.0   # ms
+  compute_power_spectrum: true
+  frequency_bands:
+    gamma: [30, 80]
+    beta:  [12, 30]
+    theta: [4, 12]
+  compute_correlation: true
+  compute_synchrony: true
+
+output:
+  dir: "results/l5_microcircuit"
+  formats: ["hdf5"]
+
+---
+# ─────────────────────────────────────────────────────────────
+#  Configuration: Large-scale cortical column
+#  10,000 neurons across 6 layers  (requires MPI)
+# ─────────────────────────────────────────────────────────────
+
+experiment:
+  name: "cortical_column_10k"
+  description: "Realistic cortical column with laminar structure"
+
+simulation:
+  dt: 0.025
+  t_stop: 10000.0     # 10 seconds
+  integrator: "rk4"
+  temperature: 37.0
+  record_dt: 0.5      # lower recording resolution for memory
+  n_workers: 32
+  checkpoint_interval: 1000.0
+  seed: 42
+
+hpc:
+  distributed: true
+  n_mpi_ranks: 64
+  min_delay: 1.0       # ms  MPI sync interval
+  backend: "mpi4py"
+  gpu_acceleration: true
+  n_gpus_per_node: 4
+
+network:
+  type: "cortical_column"
+  n_total: 10000
+  layer_composition:
+    L2_3_exc:  1060     # 80% excitatory per layer
+    L2_3_inh:   264
+    L4_exc:    1280
+    L4_inh:     320
+    L5_exc:    1060
+    L5_inh:     264
+    L6_exc:    2664
+    L6_inh:     640
+    TC_relay:   448     # thalamo-cortical relay neurons
+  morphology: "simplified"   # "full" for SWC-based
+  connectivity:
+    source: "blue_brain_atlas"
+    version: "v2"
+
+stimulation:
+  type: "thalamic_input"
+  target_layer: "L4"
+  rate: 20.0            # Hz
+  duration: [1000.0, 9000.0]   # [t_start, t_stop] ms
+
+recording:
+  soma_voltage: false   # too much data at 10k neurons
+  spike_times: true
+  population_rates: true
+  lfp_array:
+    n_electrodes: 16
+    spacing_um: 100.0
+    orientation: "vertical"
+
+output:
+  dir: "results/cortical_column_10k"
+  formats: ["hdf5", "sonata"]
+  compression: "gzip"
+  compression_opts: 6

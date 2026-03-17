@@ -1,0 +1,153 @@
+[build-system]
+requires = ["setuptools>=65", "wheel", "cmake", "pybind11"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "neurosim"
+version = "1.0.0"
+description = "Large-scale neural simulation platform for brain mapping and modeling"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [{ name = "NeuroSim Contributors" }]
+keywords = ["neuroscience", "simulation", "computational-neuroscience", "HPC"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+requires-python = ">=3.10"
+
+dependencies = [
+    # Core scientific
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "numba>=0.57",
+    "pandas>=2.0",
+    "h5py>=3.8",
+
+    # Simulation & modeling
+    "neuron>=8.2",        # NEURON simulator (optional but recommended)
+
+    # API
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.22",
+    "pydantic>=2.0",
+    "httpx>=0.24",
+    "websockets>=11",
+
+    # Data pipelines
+    "dask>=2023.1",
+    "zarr>=2.14",
+    "pyarrow>=12",
+
+    # Visualization
+    "plotly>=5.15",
+    "dash>=2.11",
+    "vtk>=9.2",
+    "trimesh>=3.21",
+
+    # HPC
+    "mpi4py>=3.1",
+    "celery[redis]>=5.3",
+    "redis>=4.5",
+
+    # Utilities
+    "click>=8.1",
+    "pyyaml>=6.0",
+    "tqdm>=4.65",
+    "rich>=13",
+    "loguru>=0.7",
+]
+
+[project.optional-dependencies]
+ml = [
+    "torch>=2.0",
+    "scikit-learn>=1.3",
+    "umap-learn>=0.5",
+    "optuna>=3.2",
+]
+gpu = [
+    "cupy-cuda12x>=12.0",
+]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.21",
+    "pytest-cov>=4.1",
+    "pytest-benchmark>=4.0",
+    "black>=23",
+    "ruff>=0.0.290",
+    "mypy>=1.5",
+    "pre-commit>=3.4",
+]
+docs = [
+    "sphinx>=7",
+    "sphinx-rtd-theme>=1.3",
+    "nbsphinx>=0.9",
+    "myst-parser>=2",
+]
+
+[project.scripts]
+neurosim       = "neurosim.cli:main"
+neurosim-serve = "neurosim.api.main:serve"
+neurosim-bench = "neurosim.benchmark:main"
+
+[tool.setuptools.packages.find]
+where = ["python"]
+
+# ─────────────────────────────────────────────────────────────
+#  Ruff linting configuration
+# ─────────────────────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
+ignore  = ["E501", "B007", "N803", "N806"]
+
+[tool.ruff.isort]
+known-first-party = ["neurosim"]
+
+# ─────────────────────────────────────────────────────────────
+#  Black formatter
+# ─────────────────────────────────────────────────────────────
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+# ─────────────────────────────────────────────────────────────
+#  MyPy type checking
+# ─────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+# ─────────────────────────────────────────────────────────────
+#  Pytest configuration
+# ─────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths      = ["tests"]
+asyncio_mode   = "auto"
+addopts        = "-v --tb=short --cov=neurosim --cov-report=html --cov-report=term-missing"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+# ─────────────────────────────────────────────────────────────
+#  Coverage
+# ─────────────────────────────────────────────────────────────
+[tool.coverage.run]
+source  = ["python/neurosim"]
+omit    = ["*/tests/*", "*/benchmark/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
